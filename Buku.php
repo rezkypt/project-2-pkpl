@@ -1,109 +1,165 @@
 <?php
 
-namespace App\Http\Livewire\Peminjam;
+namespace App\Http\Livewire\Petugas;
 
 use App\Models\Buku as ModelsBuku;
-use App\Models\DetailPeminjaman;
 use App\Models\Kategori;
-use App\Models\Peminjaman;
+use App\Models\Penerbit;
+use App\Models\Rak;
 use Livewire\Component;
 use Livewire\WithPagination;
-use Illuminate\Support\Facades\DB;
+use Livewire\WithFileUploads;
+use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Storage;
 
 class Buku extends Component
 {
     use WithPagination;
     protected $paginationTheme = 'bootstrap';
+    use WithFileUploads;
 
-    protected $listeners = ['pilihKategori', 'semuaKategori'];
+    public $create, $edit, $delete, $show;
+    public $kategori, $rak, $penerbit;
+    public $kategori_id, $rak_id, $penerbit_id, $baris;
+    public $judul, $stok, $penulis, $sampul, $buku_id, $search;
 
-    public $kategori_id, $pilih_kategori, $buku_id, $detail_buku, $search;
+    protected $rules = [
+        'judul' => 'required',
+        'penulis' => 'required',
+        'stok' => 'required|numeric|min:1',
+        'sampul' => 'required|image|max:1024',
+        'kategori_id' => 'required|numeric|min:1',
+        'rak_id' => 'required|numeric|min:1',
+        'penerbit_id' => 'required|numeric|min:1',
+    ];
 
-    public function pilihKategori($id)
+    protected $validationAttributes = [
+        'kategori_id' => 'kategori',
+        'rak_id' => 'rak',
+        'penerbit_id' => 'penerbit',
+    ];
+
+    public function pilihKategori()
     {
-        $this->format();
-        $this->kategori_id = $id;
-        $this->pilih_kategori = true;
-        $this->updatingSearch();
+        $this->rak = Rak::where('kategori_id', $this->kategori_id)->get();
     }
 
-    public function semuaKategori()
+    public function create()
     {
         $this->format();
-        $this->pilih_kategori = false;
-        $this->updatingSearch();
+
+        $this->create = true;
+        $this->kategori = Kategori::all();
+        $this->penerbit = Penerbit::all();
     }
 
-    public function detailBuku($id)
+    public function store()
+    {
+        $this->validate();
+
+        $this->sampul = $this->sampul->store('buku', 'public');
+
+        ModelsBuku::create([
+            'sampul' => $this->sampul,
+            'judul' => $this->judul,
+            'penulis' => $this->penulis,
+            'stok' => $this->stok,
+            'kategori_id' => $this->kategori_id,
+            'rak_id' => $this->rak_id,
+            'penerbit_id' => $this->penerbit_id,
+            'slug' => Str::slug($this->judul)
+        ]);
+
+        session()->flash('sukses', 'Data berhasil ditambahkan.');
+        $this->format();
+    }
+
+    public function show(ModelsBuku $buku)
     {
         $this->format();
-        $this->detail_buku = true;
-        $this->buku_id = $id;
+
+        $this->show = true;
+        $this->judul = $buku->judul;
+        $this->sampul = $buku->sampul;
+        $this->penulis = $buku->penulis;
+        $this->stok = $buku->stok;
+        $this->kategori = $buku->kategori->nama;
+        $this->penerbit = $buku->penerbit->nama;
+        $this->rak = $buku->rak->rak;
+        $this->baris = $buku->rak->baris;
     }
 
-    public function keranjang(ModelsBuku $buku)
+    public function edit(ModelsBuku $buku)
     {
-        // user harus login
-        if (auth()->user()) {
-            
-            // role peminjam
-            if (auth()->user()->hasRole('peminjam')) {
-               
-                $peminjaman_lama = DB::table('peminjaman')
-                    ->join('detail_peminjaman', 'peminjaman.id', '=', 'detail_peminjaman.peminjaman_id')
-                    ->where('peminjam_id', auth()->user()->id)
-                    ->where('status', '!=', 3)
-                    ->get();
+        $this->format();
 
-                // jumlah maksimal 2
-                if ($peminjaman_lama->count() == 2) {
-                    session()->flash('gagal', 'Buku yang dipinjam maksimal 2');
-                } else {
+        $this->edit = true;
+        $this->buku_id = $buku->id;
+        $this->judul = $buku->judul;
+        $this->penulis = $buku->penulis;
+        $this->stok = $buku->stok;
+        $this->kategori_id = $buku->kategori_id;
+        $this->rak_id = $buku->rak_id;
+        $this->penerbit_id = $buku->penerbit_id;
+        $this->kategori = Kategori::all();
+        $this->rak = Rak::where('kategori_id', $buku->kategori_id)->get();
+        $this->penerbit = Penerbit::all();
+    }
 
-                    // peminjaman belum ada isinya
-                    if ($peminjaman_lama->count() == 0) {
-                        $peminjaman_baru = Peminjaman::create([
-                            'kode_pinjam' => random_int(100000000, 999999999),
-                            'peminjam_id' => auth()->user()->id,
-                            'status' => 0
-                        ]);
+    public function update(ModelsBuku $buku)
+    {
+        $validasi = [
+            'judul' => 'required',
+            'penulis' => 'required',
+            'stok' => 'required|numeric|min:1',
+            'kategori_id' => 'required|numeric|min:1',
+            'rak_id' => 'required|numeric|min:1',
+            'penerbit_id' => 'required|numeric|min:1',
+        ];
 
-                        DetailPeminjaman::create([
-                            'peminjaman_id' => $peminjaman_baru->id,
-                            'buku_id' => $buku->id
-                        ]);
-
-                        $this->emit('tambahKeranjang');
-                        session()->flash('sukses', 'Buku berhasil ditambahkan ke dalam keranjang');
-                    } else {
-
-                        // buku tidak boleh sama
-                        if ($peminjaman_lama[0]->buku_id == $buku->id) {
-                            session()->flash('gagal', 'Buku tidak boleh sama');
-                        } else {
-
-                            DetailPeminjaman::create([
-                                'peminjaman_id' => $peminjaman_lama[0]->peminjaman_id,
-                                'buku_id' => $buku->id
-                            ]);
-
-                            $this->emit('tambahKeranjang');
-                            session()->flash('sukses', 'Buku berhasil ditambahkan ke dalam keranjang');
-                        }
-
-                    }
-
-                }
-
-            } else {
-                session()->flash('gagal', 'Role user anda bukan peminjam');
-            }
-
-        } else {
-            session()->flash('gagal', 'Anda harus login terlebih dahulu');
-            redirect('/login');
+        if ($this->sampul) {
+            $validasi['sampul'] = 'required|image|max:1024';
         }
-        
+
+        $this->validate($validasi);
+
+        if ($this->sampul) {
+            Storage::disk('public')->delete($buku->sampul);
+            $this->sampul = $this->sampul->store('buku', 'public');
+        } else {
+            $this->sampul = $buku->sampul;
+        }
+
+        $buku->update([
+            'sampul' => $this->sampul,
+            'judul' => $this->judul,
+            'penulis' => $this->penulis,
+            'stok' => $this->stok,
+            'kategori_id' => $this->kategori_id,
+            'rak_id' => $this->rak_id,
+            'penerbit_id' => $this->penerbit_id,
+            'slug' => Str::slug($this->judul)
+        ]);
+
+        session()->flash('sukses', 'Data berhasil diubah.');
+        $this->format();
+    }
+
+    public function delete(ModelsBuku $buku)
+    {
+        $this->format();
+
+        $this->delete = true;
+        $this->buku_id = $buku->id;
+    }
+
+    public function destroy(ModelsBuku $buku)
+    {
+        Storage::disk('public')->delete($buku->sampul);
+        $buku->delete();
+
+        session()->flash('sukses', 'Data berhasil dihapus.');
+        $this->format();
     }
 
     public function updatingSearch()
@@ -113,33 +169,31 @@ class Buku extends Component
 
     public function render()
     {
-        if ($this->pilih_kategori) {
-            if ($this->search) {
-                $buku = ModelsBuku::latest()->where('judul', 'like', '%'. $this->search .'%')->where('kategori_id', $this->kategori_id)->paginate(12);
-            } else {
-                $buku = ModelsBuku::latest()->where('kategori_id', $this->kategori_id)->paginate(12);
-            }
-            $title = Kategori::find($this->kategori_id)->nama;
-        }elseif ($this->detail_buku) {
-            $buku = ModelsBuku::find($this->buku_id);
-            $title = 'Detail Buku';
+        if ($this->search) {
+            $buku = ModelsBuku::latest()->where('judul', 'like', '%'. $this->search .'%')->paginate(5);
         } else {
-            if ($this->search) {
-                $buku = ModelsBuku::latest()->where('judul', 'like', '%'. $this->search .'%')->paginate(12);
-            } else {
-                $buku = ModelsBuku::latest()->paginate(12);
-            }
-            $title = 'Semua Buku';
+            $buku = ModelsBuku::latest()->paginate(5);
         }
         
-        return view('livewire.peminjam.buku', compact('buku', 'title'));
+        return view('livewire.petugas.buku', compact('buku'));
     }
 
     public function format()
     {
-        $this->detail_buku = false;
-        $this->pilih_kategori = false;
+        unset($this->create);
+        unset($this->delete);
+        unset($this->edit);
+        unset($this->show);
         unset($this->buku_id);
+        unset($this->judul);
+        unset($this->sampul);
+        unset($this->stok);
+        unset($this->penulis);
+        unset($this->kategori);
+        unset($this->penerbit);
+        unset($this->rak);
+        unset($this->rak_id);
+        unset($this->penerbit_id);
         unset($this->kategori_id);
     }
 }
